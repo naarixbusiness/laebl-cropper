@@ -2,8 +2,10 @@ import './style.css';
 import { buildSheets, canEmbedVector } from './compose.js';
 import { editCrop } from './crop-editor.js';
 import { detectLabels } from './detect.js';
+import { clearHistory, loadHistory, recordPrinted } from './history.js';
 import { SUPPORTED_PER_PAGE, chunk, gridFor } from './layout.js';
 import { closePdf, cropCanvas, isPasswordError, openPdf, readPage, renderPage, viewCropToPdfBox } from './pdf-read.js';
+import { contentName, pdfsFromText } from './paste.js';
 import { drawSheetPreview } from './preview.js';
 import * as store from './store.js';
 
@@ -13,7 +15,10 @@ const PLATFORMS = ['amazon', 'meesho', 'flipkart', 'unknown'];
 const SETTINGS_KEY = 'label-cropper-settings';
 
 const files = new Map(); // fileKey -> { name, bytes, doc, vector }
-let labels = []; // { key, fileId, pageIndex, index, perPage, platform, crop, skip, reason, thumb }
+// { key, fileId, pageIndex, index, perPage, platform, crop, skip, reason, thumb,
+//   orderId, uid, duplicate, reprint }
+let labels = [];
+const printHistory = new Map(); // uid -> print record (see history.js)
 let filter = 'all';
 let sheetIndex = 0;
 let busy = false;
@@ -25,6 +30,7 @@ const grid = $('#grid');
 const errors = $('#errors');
 const perPageSelect = $('#per-page');
 const cutLinesInput = $('#cut-lines');
+const includePrintedInput = $('#include-printed');
 const previewCanvas = $('#preview');
 const $$ = (sel) => [...document.querySelectorAll(sel)];
 const isIOS =
@@ -44,6 +50,7 @@ for (const n of SUPPORTED_PER_PAGE) {
 const saved = loadSettings();
 perPageSelect.value = String(saved.perPage ?? 4);
 cutLinesInput.checked = saved.cutLines ?? true;
+includePrintedInput.checked = saved.includePrinted ?? false;
 
 function loadSettings() {
   try {
@@ -53,7 +60,10 @@ function loadSettings() {
   }
 }
 function saveSettings() {
-  localStorage.setItem(SETTINGS_KEY, JSON.stringify({ perPage: perPage(), cutLines: cutLinesInput.checked }));
+  localStorage.setItem(
+    SETTINGS_KEY,
+    JSON.stringify({ perPage: perPage(), cutLines: cutLinesInput.checked, includePrinted: includePrintedInput.checked }),
+  );
 }
 const perPage = () => Number(perPageSelect.value);
 
@@ -65,6 +75,11 @@ perPageSelect.addEventListener('change', () => {
 cutLinesInput.addEventListener('change', () => {
   saveSettings();
   updatePreview();
+});
+includePrintedInput.addEventListener('change', () => {
+  saveSettings();
+  sheetIndex = 0;
+  render();
 });
 
 // ---------- adding files ----------
@@ -91,31 +106,53 @@ dropZone.addEventListener('drop', (e) => {
   addFiles([...e.dataTransfer.files]);
 });
 
-// ---------- pasting a copied PDF ----------
-// iPhone can't put a web app in WhatsApp's share menu, but WhatsApp → Share → Copy puts
-// the PDF on the clipboard. Long-pressing the paste box brings up iOS's "Paste" menu.
+// ---------- pasting a PDF ----------
+// iPhone (Safari, Chrome and home-screen apps are all WebKit) never gives a web page a
+// copied PDF file, only images. So on iPhone an iOS Shortcut in WhatsApp's share menu
+// copies the PDF as base64 text, and "Paste PDF" turns it back into the original file.
+// Desktop: Ctrl/⌘+V of a copied PDF file works too.
 
-const pasteBox = $('#paste-box');
-pasteBox.dataset.placeholder = isIOS || isAndroid ? 'Copied a PDF? Long-press here → Paste' : 'Copied a PDF? Click here and press Ctrl+V';
 if (isIOS) {
-  $('#share-hint-text').innerHTML = 'From WhatsApp: PDF → <b>Share</b> → <b>Copy</b>, then paste it above';
+  $('#share-hint-text').innerHTML =
+    'From WhatsApp: PDF → <b>Share</b> → <b>Label Cropper</b> shortcut, then tap <b>Paste PDF</b>';
 }
-// Nothing may be typed or dropped in; it only exists to receive a paste.
-pasteBox.addEventListener('beforeinput', (e) => e.preventDefault());
-pasteBox.addEventListener('drop', (e) => e.preventDefault());
+for (const el of $$('.js-paste-help')) el.addEventListener('click', () => showPasteHelp());
+
+$('#paste-btn').addEventListener('click', async () => {
+  if (!navigator.clipboard?.readText) {
+    showPasteHelp('This browser can’t read the clipboard here — press Ctrl+V (⌘+V) instead.');
+    return;
+  }
+  let text;
+  try {
+    text = await navigator.clipboard.readText(); // iOS shows its "Paste" bubble first
+  } catch (err) {
+    if (err.name !== 'NotAllowedError') showPasteHelp(`Could not read the clipboard (${err.message}).`);
+    return; // NotAllowedError: the "Paste" bubble was dismissed
+  }
+  addPastedText(text);
+});
 
 document.addEventListener('paste', async (e) => {
+  if (e.target.closest?.('input, textarea, [contenteditable]')) return;
+  // clipboardData is only readable during the event, so take everything before awaiting.
   const pasted = clipboardFiles(e.clipboardData);
-  // Text pasted anywhere but the paste box is left alone.
-  if (!pasted.length && e.target !== pasteBox && !pasteBox.contains(e.target)) return;
+  const text = pasted.length ? '' : (e.clipboardData?.getData('text/plain') ?? '');
   e.preventDefault();
-  pasteBox.textContent = '';
-  pasteBox.blur();
+  if (!pasted.length) {
+    addPastedText(text);
+    return;
+  }
   const pdfs = (await Promise.all(pasted.map(asPdf))).filter(Boolean);
   if (pdfs.length) addFiles(pdfs);
-  else if (pasted.length) toast('Only PDF files are supported');
-  else toast('No PDF copied — in WhatsApp tap Share → Copy first');
+  else toast('Only PDF files are supported');
 });
+
+function addPastedText(text) {
+  const pdfs = pdfsFromText(text);
+  if (pdfs.length) addFiles(pdfs.map((bytes) => new File([bytes], contentName(bytes), { type: 'application/pdf' })));
+  else showPasteHelp('No PDF on the clipboard.');
+}
 
 function clipboardFiles(data) {
   if (!data) return [];
@@ -125,10 +162,10 @@ function clipboardFiles(data) {
 
 // Pasted files can arrive without a name or type, so check the bytes themselves.
 async function asPdf(f) {
-  const head = new Uint8Array(await f.slice(0, 1024).arrayBuffer());
-  if (!new TextDecoder('latin1').decode(head).includes('%PDF-')) return null;
-  const name = f.name && f.name.toLowerCase().endsWith('.pdf') ? f.name : `${f.name?.replace(/\.[^.]*$/, '') || 'Pasted label'}.pdf`;
-  return new File([f], name, { type: 'application/pdf' });
+  const bytes = new Uint8Array(await f.arrayBuffer());
+  if (!new TextDecoder('latin1').decode(bytes.subarray(0, 1024)).includes('%PDF-')) return null;
+  const name = f.name?.toLowerCase().endsWith('.pdf') ? f.name : contentName(bytes);
+  return new File([bytes], name, { type: 'application/pdf' });
 }
 
 const isPdf = (f) => f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf');
@@ -147,31 +184,46 @@ async function addFiles(list) {
   if (duplicates) toast(`${duplicates} file${duplicates > 1 ? 's are' : ' is'} already added`);
   if (!fresh.length) return;
   await Promise.all(fresh.map((r) => store.saveFile(r)));
-  const added = await processRecords(fresh, new Map());
-  if (added) toast(`${added} label${added > 1 ? 's' : ''} added`);
+  toast(addedMessage(await processRecords(fresh, new Map())));
+}
+
+// e.g. "3 new labels added · 2 already printed · 1 duplicate"
+function addedMessage(added) {
+  const found = added.filter((l) => !l.skip);
+  const dup = found.filter((l) => l.duplicate).length;
+  const printed = found.filter((l) => !l.duplicate && isPrinted(l)).length;
+  const fresh = found.length - dup - printed;
+  const parts = [fresh ? `${fresh} new label${fresh > 1 ? 's' : ''} added` : 'No new labels'];
+  if (printed) parts.push(`${printed} already printed`);
+  if (dup) parts.push(`${dup} duplicate${dup > 1 ? 's' : ''}`);
+  return parts.join(' · ');
 }
 
 // Restores everything saved earlier (including files shared from WhatsApp by the
-// service worker while the app was closed).
+// service worker while the app was closed). Returns the labels it added.
 async function restore() {
   const [records, overrides] = await Promise.all([store.listFiles(), store.listOverrides()]);
   const pending = records.filter((r) => !files.has(r.key));
-  if (pending.length) await processRecords(pending, overrides);
+  return pending.length ? processRecords(pending, overrides) : [];
 }
 
 async function processRecords(records, overrides) {
   busy = true;
   updateSummary();
-  let added = 0;
+  const added = [];
   for (const [i, record] of records.entries()) {
     try {
-      added += await addFile(record, overrides, (page, total) =>
-        showProgress(record.name, i, records.length, page, total),
+      added.push(
+        ...(await addFile(record, overrides, (page, total) =>
+          showProgress(record.name, i, records.length, page, total),
+        )),
       );
     } catch (err) {
       const msg = isPasswordError(err) ? 'PDF is password-protected' : `could not read (${err.message})`;
       showError(`${record.name}: ${msg}`);
       files.delete(record.key);
+      // Drop labels from pages read before the error, or they'd point at a missing file.
+      labels = labels.filter((l) => l.fileId !== record.key);
       await store.deleteFile(record.key);
     }
     render();
@@ -188,7 +240,7 @@ async function addFile(record, overrides, onPage) {
   const fileId = record.key;
   files.set(fileId, { name: record.name, bytes, doc, vector: await canEmbedVector(bytes) });
 
-  let added = 0;
+  const added = [];
   for (let i = 0; i < doc.numPages; i++) {
     onPage(i, doc.numPages);
     const page = await doc.getPage(i + 1);
@@ -210,9 +262,13 @@ async function addFile(record, overrides, onPage) {
         skip: saved.skip ?? result.skip,
         reason: saved.skip === undefined ? result.reason : undefined,
         thumb: cropCanvas(info.canvas, crop, PREVIEW_SCALE),
+        orderId: result.orderId,
+        uid: result.uid,
+        duplicate: false, // set by markDuplicates()
+        reprint: saved.reprint ?? false,
       };
       labels.push(label);
-      if (!label.skip) added++;
+      added.push(label);
     }
     page.cleanup();
   }
@@ -222,6 +278,7 @@ async function addFile(record, overrides, onPage) {
 function persistLabel(label) {
   const value = { skip: label.skip };
   if (label.cropEdited) value.crop = label.crop;
+  if (label.reprint) value.reprint = true;
   store.saveOverride(label.key, value);
 }
 
@@ -247,23 +304,63 @@ function toast(text) {
   toastTimer = setTimeout(() => el.classList.remove('show'), 2800);
 }
 
+// ---------- order IDs: duplicates + print history ----------
+
+// The same order loaded twice (from one PDF or several) is printed once: the first copy
+// in load order is kept, later copies become duplicates. Labels without an order ID are
+// never merged.
+function markDuplicates() {
+  const seen = new Set();
+  for (const l of labels) {
+    l.duplicate = !!l.uid && seen.has(l.uid);
+    if (l.uid) seen.add(l.uid);
+  }
+}
+
+const isPrinted = (l) => !!l.uid && printHistory.has(l.uid);
+const includePrinted = () => includePrintedInput.checked;
+
+// Whether a label goes into the PDF (before the platform filter is applied).
+function isIncluded(l) {
+  if (l.skip || l.duplicate) return false;
+  return !isPrinted(l) || includePrinted() || l.reprint;
+}
+
+function printedText(l) {
+  const r = printHistory.get(l.uid);
+  const date = new Date(r.lastPrintedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+  return `Printed${r.count > 1 ? ` ${r.count}×` : ''} · ${date}`;
+}
+
 // ---------- label grid ----------
 
+const FILTER_TESTS = {
+  all: () => true,
+  printed: (l) => isPrinted(l) && !l.duplicate,
+  duplicate: (l) => l.duplicate,
+  skipped: (l) => l.skip,
+};
+const matchesFilter = (l, key) => (FILTER_TESTS[key] ?? ((x) => x.platform === key))(l);
+
 function visibleLabels() {
-  if (filter === 'all') return labels;
-  if (filter === 'skipped') return labels.filter((l) => l.skip);
-  return labels.filter((l) => l.platform === filter);
+  return labels.filter((l) => matchesFilter(l, filter));
 }
 
 function renderFilters() {
-  const counts = { all: labels.length, skipped: labels.filter((l) => l.skip).length };
-  for (const p of PLATFORMS) counts[p] = labels.filter((l) => l.platform === p).length;
+  const counts = {};
+  for (const key of [...Object.keys(FILTER_TESTS), ...PLATFORMS]) {
+    counts[key] = labels.filter((l) => matchesFilter(l, key)).length;
+  }
   if (filter !== 'all' && !counts[filter]) filter = 'all';
 
   const chips = [
     ['all', 'All'],
     ...PLATFORMS.filter((p) => counts[p]).map((p) => [p, capitalize(p)]),
-    ...(counts.skipped ? [['skipped', 'Skipped']] : []),
+    ...[
+      ['printed', 'Printed'],
+      ['duplicate', 'Duplicate'],
+      ['skipped', 'Skipped'],
+    ].filter(([key]) => counts[key]),
   ];
   const box = $('#filters');
   box.innerHTML = '';
@@ -283,6 +380,7 @@ function renderFilters() {
 }
 
 function render() {
+  markDuplicates();
   renderFilters();
   $('#toolbar').hidden = labels.length === 0;
   grid.innerHTML = '';
@@ -295,22 +393,40 @@ function render() {
 function renderCard(label) {
   const file = files.get(label.fileId);
   const card = document.createElement('div');
-  card.className = `label-card ${label.platform}${label.skip ? ' skipped' : ''}`;
+  const included = isIncluded(label);
+  card.className = `label-card ${label.platform}${included ? '' : ' skipped'}`;
   const where = `p${label.pageIndex + 1}${label.perPage > 1 ? ` · ${label.index + 1}/${label.perPage}` : ''}`;
+  const tags = [];
+  if (label.duplicate) tags.push(['dup', 'Duplicate']);
+  else if (isPrinted(label)) tags.push(['printed', printedText(label)]);
+  if (label.skip) tags.push(['skip', label.reason ?? 'Skipped']);
+  const order = label.orderId
+    ? `<span class="card-order">#${escapeHtml(label.orderId)}</span>`
+    : label.reason
+      ? ''
+      : '<span class="card-order missing">No order ID found</span>';
+  const switchTitle = label.duplicate ? 'Duplicate — the first copy is printed instead' : 'Include in print';
   card.innerHTML = `
     <div class="thumb">
       <span class="badge">${label.platform}</span>
-      ${label.skip ? `<span class="skip-tag">${label.reason ? escapeHtml(label.reason) : 'Skipped'}</span>` : ''}
+      <span class="tags">${tags.map(([cls, text]) => `<span class="tag ${cls}">${escapeHtml(text)}</span>`).join('')}</span>
       <button class="btn small edit-btn">✎ Crop</button>
     </div>
     <div class="card-foot">
-      <span class="card-name" title="${escapeHtml(file.name)}"><b>${where}</b> · ${escapeHtml(file.name)}</span>
-      <input type="checkbox" class="switch" title="Include in print" aria-label="Include in print" ${label.skip ? '' : 'checked'} />
+      <span class="card-info">
+        <span class="card-name" title="${escapeHtml(file.name)}"><b>${where}</b> · ${escapeHtml(file.name)}</span>
+        ${order}
+      </span>
+      <input type="checkbox" class="switch" title="${switchTitle}" aria-label="${switchTitle}"
+        ${included ? 'checked' : ''} ${label.duplicate ? 'disabled' : ''} />
     </div>`;
   card.querySelector('.thumb').prepend(label.thumb);
   card.querySelector('.switch').addEventListener('change', (e) => {
-    label.skip = !e.target.checked;
+    const on = e.target.checked;
+    label.skip = !on;
     label.reason = undefined;
+    // Turning on an already-printed label while printed ones are left out = reprint it.
+    label.reprint = on && isPrinted(label) && !includePrinted();
     persistLabel(label);
     if (filter === 'skipped') render();
     else {
@@ -327,6 +443,9 @@ function setSkipForVisible(skip) {
   for (const l of visibleLabels()) {
     l.skip = skip;
     l.reason = undefined;
+    // "Print all" on the Printed filter means reprint them.
+    if (skip) l.reprint = false;
+    else if (filter === 'printed') l.reprint = isPrinted(l);
     persistLabel(l);
   }
   render();
@@ -386,9 +505,9 @@ function clampCrop(c, width, height) {
 function printFilter() {
   return PLATFORMS.includes(filter) ? filter : null;
 }
+const inPrintScope = (l) => !printFilter() || l.platform === printFilter();
 function activeLabels() {
-  const platform = printFilter();
-  return labels.filter((l) => !l.skip && (!platform || l.platform === platform));
+  return labels.filter((l) => isIncluded(l) && inPrintScope(l));
 }
 
 function updateSummary() {
@@ -401,8 +520,17 @@ function updateSummary() {
   for (const el of $$('.js-labels-word')) el.textContent = active === 1 ? 'label' : 'labels';
   for (const el of $$('.js-sheets-word')) el.textContent = sheetCount === 1 ? 'sheet' : 'sheets';
   $('#stat-skipped').textContent = skipped;
-  const scope = platform ? `Printing ${capitalize(platform)} labels only` : skipped ? `${skipped} skipped` : '';
+  // Printed labels left out by the "include printed" switch (not skipped by hand).
+  const leftOut = labels.filter((l) => inPrintScope(l) && !l.skip && !l.duplicate && !isIncluded(l)).length;
+  const scope = [
+    platform ? `Printing ${capitalize(platform)} labels only` : skipped ? `${skipped} skipped` : '',
+    leftOut ? `${leftOut} already printed not included` : '',
+  ]
+    .filter(Boolean)
+    .join(' · ');
   for (const el of $$('.js-scope')) el.textContent = scope;
+  $('#history-count').textContent = `${printHistory.size} order${printHistory.size === 1 ? '' : 's'} saved as printed`;
+  $('#clear-history').disabled = printHistory.size === 0;
   for (const b of [...downloadButtons, ...shareButtons]) b.disabled = busy || active === 0;
   $('#clear').hidden = labels.length === 0;
   $('#clear').disabled = busy;
@@ -444,8 +572,9 @@ async function exportPdf(mode) {
   updateSummary();
   toast('Creating PDF…');
   try {
+    const chosen = activeLabels();
     const items = [];
-    for (const label of activeLabels()) {
+    for (const label of chosen) {
       const file = files.get(label.fileId);
       const page = await file.doc.getPage(label.pageIndex + 1);
       items.push({ ...label, vector: file.vector, rotation: page.rotate, pdfBox: viewCropToPdfBox(page, label.crop) });
@@ -459,17 +588,19 @@ async function exportPdf(mode) {
     );
     const platform = printFilter();
     const name = `labels-${platform ? `${platform}-` : ''}${new Date().toISOString().slice(0, 10)}.pdf`;
+    let shared = false;
     if (mode === 'share') {
       try {
         await navigator.share({ files: [new File([bytes], name, { type: 'application/pdf' })], title: name });
-        return;
+        shared = true;
       } catch (err) {
         if (err.name === 'AbortError') return;
         // Share may be refused (e.g. took too long after the tap) — fall back to a download.
       }
     }
-    downloadFile(bytes, name);
-    toast(`✓ ${name} downloaded`);
+    if (!shared) downloadFile(bytes, name);
+    const saved = await markPrinted(chosen);
+    toast(`✓ ${shared ? 'PDF shared' : `${name} downloaded`}${saved ? ` · ${saved} order${saved > 1 ? 's' : ''} saved as printed` : ''}`);
   } catch (err) {
     showError(`Could not create PDF: ${err.message}`);
   } finally {
@@ -477,6 +608,34 @@ async function exportPdf(mode) {
     updateSummary();
   }
 }
+
+// Remembers what went into the PDF; reprint requests are done once it's printed.
+async function markPrinted(chosen) {
+  try {
+    const saved = await recordPrinted(printHistory, chosen);
+    for (const l of chosen) {
+      if (!l.reprint) continue;
+      l.reprint = false;
+      persistLabel(l);
+    }
+    render();
+    return saved;
+  } catch (err) {
+    showError(`PDF is ready, but print history could not be saved (${err.message})`);
+    return 0;
+  }
+}
+
+$('#clear-history').addEventListener('click', async () => {
+  if (!confirm(`Forget all ${printHistory.size} printed orders? Their labels will count as new again.`)) return;
+  try {
+    await clearHistory(printHistory);
+    toast('Print history cleared');
+  } catch (err) {
+    showError(`Could not clear print history (${err.message})`);
+  }
+  render();
+});
 
 // High-resolution image of one label, for PDFs pdf-lib can't copy from.
 async function renderLabelPng(label) {
@@ -543,20 +702,63 @@ function showInstallHelp() {
         'Tap <b>Install</b>. Then share PDFs from WhatsApp → <b>Share</b> → <b>Label Cropper</b>.',
       ];
   const note = isIOS
-    ? '<p class="install-note">iPhone does not let web apps appear in the WhatsApp share menu. Instead tap the PDF in WhatsApp → <b>Share</b> → <b>Copy</b>, then long-press the paste box here → <b>Paste</b>.</p>'
+    ? '<p class="install-note">iPhone does not let web apps appear in the WhatsApp share menu. <a href="#" class="js-paste-help">Set up the Label Cropper shortcut</a> to send PDFs here instead.</p>'
     : '';
+  showModal('Install Label Cropper', `${stepList(steps)}${note}`);
+}
+
+// problem: optional line explaining why the help opened (e.g. nothing to paste).
+function showPasteHelp(problem) {
+  const intro = problem ? `<p class="install-note warn">${escapeHtml(problem)}</p>` : '';
+  const body = isIOS
+    ? `${intro}
+      <h3>One-time setup (2 minutes)</h3>
+      ${stepList([
+        'Open the <b>Shortcuts</b> app → tap <b>+</b> → name it <b>Label Cropper</b>.',
+        'Tap <b>ⓘ</b> (or the name at the top → <b>Details</b>) → turn on <b>Show in Share Sheet</b>. In the first action tap <b>Any</b> / <b>Images and more</b> and keep only <b>PDFs</b>.',
+        'Add the action <b>Base64 Encode</b> → tap ▸ → <b>Line Breaks: None</b>.',
+        'Add <b>Combine Text</b> → <b>New Lines</b> (lets you send several PDFs at once).',
+        'Add <b>Copy to Clipboard</b>. Optional: add <b>Show Notification</b> “Open Label Cropper and tap Paste”.',
+      ])}
+      <h3>Every day</h3>
+      ${stepList([
+        'WhatsApp: open the PDF → <b>Share</b> → <b>Label Cropper</b>.',
+        'Open this app → <b>Paste PDF</b> → tap <b>Paste</b>.',
+      ])}
+      <p class="install-note">No shortcut? WhatsApp → <b>Share</b> → <b>Save to Files</b>, then tap <b>Select label PDFs</b> here → <b>Recents</b>.</p>`
+    : `${intro}
+      ${stepList([
+        'Copy a PDF file (Files / Explorer / Finder), then press <b>Ctrl+V</b> (<b>⌘+V</b>) anywhere on this page.',
+        isAndroid
+          ? 'From WhatsApp: install this app, then PDF → <b>Share</b> → <b>Label Cropper</b>.'
+          : 'Or drop PDF files on the <b>Select label PDFs</b> box.',
+      ])}`;
+  showModal(isIOS ? 'Send PDFs from WhatsApp (iPhone)' : 'Paste a PDF', body);
+}
+
+function stepList(steps) {
+  return `<ol class="install-steps">${steps.map((s) => `<li><span>${s}</span></li>`).join('')}</ol>`;
+}
+
+function showModal(title, bodyHtml) {
   const modal = document.createElement('div');
   modal.className = 'modal';
   modal.innerHTML = `
-    <div class="modal-box install-box" role="dialog" aria-modal="true" aria-labelledby="install-title">
-      <h2 id="install-title">Install Label Cropper</h2>
-      <ol class="install-steps">${steps.map((s) => `<li><span>${s}</span></li>`).join('')}</ol>
-      ${note}
+    <div class="modal-box install-box" role="dialog" aria-modal="true" aria-labelledby="help-title">
+      <h2 id="help-title">${escapeHtml(title)}</h2>
+      ${bodyHtml}
       <div class="modal-actions"><span class="spacer"></span><button class="primary">Got it</button></div>
     </div>`;
   const close = () => modal.remove();
-  modal.querySelector('button').addEventListener('click', close);
+  modal.querySelector('.modal-actions button').addEventListener('click', close);
   modal.addEventListener('click', (e) => e.target === modal && close());
+  for (const link of modal.querySelectorAll('.js-paste-help')) {
+    link.addEventListener('click', (e) => {
+      e.preventDefault();
+      close();
+      showPasteHelp();
+    });
+  }
   document.body.append(modal);
 }
 window.addEventListener('appinstalled', () => {
@@ -576,8 +778,18 @@ const ignored = Number(params.get('ignored') || 0);
 if (shared !== null) history.replaceState(null, '', location.pathname);
 
 render();
-restore().then(() => {
+start();
+
+async function start() {
+  // History first, so restored labels show their "Printed" tags straight away.
+  try {
+    for (const [uid, r] of await loadHistory()) printHistory.set(uid, r);
+  } catch (err) {
+    showError(`Print history unavailable (${err.message})`);
+  }
+  render();
+  await restore();
   if (shared === null) return;
   if (Number(shared)) toast(`${shared} shared PDF${Number(shared) > 1 ? 's' : ''} added`);
   else if (ignored) toast('This PDF is already added');
-});
+}

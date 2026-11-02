@@ -1,6 +1,7 @@
 // Label detection. Works in "view space": points, origin top-left, y grows down
 // (pdf.js viewport at scale 1), so it matches what the user sees on screen.
 
+import { findOrderId } from './order-id.js';
 import { LABEL_HEIGHT_FRACTION } from './presets.js';
 
 // Checked in order. Meesho label PDFs often don't contain the word "Meesho",
@@ -137,12 +138,13 @@ export function inkBox(image, region, { threshold = 235, gap = 4, thin = 3 } = {
 // Full detection for one page.
 // page: { width, height, text, items: [{ str, top, left }], image, scale }
 //   image is the page rendered at `scale` (RGBA ImageData-like).
-// Returns one entry per label found: { platform, skip, reason?, crop: { x, y, w, h } }
-// (crop in view-space points). Invoice-only or blank pages give a single skipped entry.
+// Returns one entry per label found: { platform, skip, reason?, crop: { x, y, w, h }, orderId, uid }
+// (crop in view-space points). Invoice-only or blank pages give a single skipped entry,
+// with no order ID: an invoice must never stand in for its label as the "original".
 export function detectLabels(page) {
   const platform = detectPlatform(page.text);
   const regions = labelRegions(page.items, platform, page.width, page.height);
-  if (!regions.length) return [{ platform, skip: true, reason: 'invoice page', crop: fullPage(page) }];
+  if (!regions.length) return [{ platform, skip: true, reason: 'invoice page', crop: fullPage(page), ...NO_ID }];
 
   const s = page.scale;
   const labels = [];
@@ -153,9 +155,21 @@ export function detectLabels(page) {
     const y = Math.max(r.y, box.y / s - PADDING);
     const right = Math.min(r.x + r.w, (box.x + box.w) / s + PADDING);
     const lower = Math.min(r.y + r.h, (box.y + box.h) / s + PADDING);
-    labels.push({ platform, skip: false, crop: { x, y, w: right - x, h: lower - y } });
+    const id = findOrderId(platform, rowText(page.items, r));
+    labels.push({ platform, skip: false, crop: { x, y, w: right - x, h: lower - y }, ...NO_ID, ...id });
   }
-  return labels.length ? labels : [{ platform, skip: true, reason: 'blank', crop: fullPage(page) }];
+  return labels.length ? labels : [{ platform, skip: true, reason: 'blank', crop: fullPage(page), ...NO_ID }];
+}
+
+const NO_ID = { orderId: null, uid: null };
+
+// Text in the label's band of the page, across the full width: the label itself, plus
+// the invoice printed beside it (Amazon labels are images; the order number is only there).
+export function rowText(items, region) {
+  return items
+    .filter((it) => it.top >= region.y && it.top < region.y + region.h)
+    .map((it) => it.str)
+    .join(' ');
 }
 
 function fullPage(page) {

@@ -67,9 +67,13 @@
           </div>
           <input id="file-input" type="file" accept="application/pdf,.pdf" multiple hidden />
         </div>
-        <!-- Editable so phones offer their native "Paste" menu on long-press; nothing is ever typed into it. -->
-        <div id="paste-box" class="paste-box" contenteditable="true" inputmode="none" spellcheck="false"
-          role="button" aria-label="Paste a copied PDF"></div>
+        <div class="paste-row">
+          <button id="paste-btn" class="btn">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="2" width="8" height="4" rx="1" /><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" /></svg>
+            Paste PDF
+          </button>
+          <button class="link-btn js-paste-help">How to send PDFs here?</button>
+        </div>
         <p id="share-hint" class="share-hint">
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4" /></svg>
           <span id="share-hint-text">From WhatsApp: PDF → <b>Share</b> → <b>Label Cropper</b> (after installing the app)</span>
@@ -123,6 +127,14 @@
             <span>Cut lines (dashed guides for cutting)</span>
             <input id="cut-lines" type="checkbox" class="switch" checked />
           </label>
+          <label class="switch-row">
+            <span>Include already printed labels<small>Off: the PDF has only new orders</small></span>
+            <input id="include-printed" type="checkbox" class="switch" />
+          </label>
+          <div class="history-row">
+            <span id="history-count">0 orders saved as printed</span>
+            <button id="clear-history" class="btn ghost small danger-text">Clear history</button>
+          </div>
         </section>
 
         <section id="preview-section" class="card-section">
