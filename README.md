@@ -17,7 +17,7 @@ Sharing from WhatsApp needs the app on an **HTTPS** site (this repo deploys to N
 2. In WhatsApp, long-press a label PDF → **Share** → **Label Cropper**.
 3. The app opens and adds the PDF to the labels you already have. Sharing the same file twice does not duplicate it.
 
-The share target works on Android Chrome only; on iPhone use **+ Add more PDFs** inside the app.
+The share target works on Android Chrome only. On iPhone: in WhatsApp open the PDF → **Share** → **Copy**, then in the app long-press the *Copied a PDF?* box → **Paste**. (On a computer, Ctrl+V / ⌘V anywhere on the page works too.)
 
 Labels are saved in the browser's storage on the device, so they survive closing the app. **Clear everything** removes them.
 

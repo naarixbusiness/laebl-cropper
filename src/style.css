@@ -122,7 +122,8 @@ svg {
 .panel {
   display: contents; /* on mobile, children are ordered individually */
 }
-.drop {
+.drop,
+.paste-box {
   order: 1;
 }
 .share-hint {
@@ -300,6 +301,36 @@ svg {
 }
 .drop.compact .drop-text strong {
   font-size: 15px;
+}
+.paste-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 46px;
+  padding: 10px 16px;
+  border: 2px dashed #d6d9e4;
+  border-radius: 14px;
+  background: #fff;
+  color: var(--muted);
+  font-size: 14px;
+  text-align: center;
+  cursor: text;
+  caret-color: transparent;
+  -webkit-user-select: text;
+  user-select: text;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+}
+.paste-box:empty::before {
+  content: attr(data-placeholder);
+  pointer-events: none;
+}
+.paste-box:focus {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary);
+  outline: none;
 }
 .share-hint {
   display: flex;

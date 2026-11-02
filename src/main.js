@@ -27,6 +27,9 @@ const perPageSelect = $('#per-page');
 const cutLinesInput = $('#cut-lines');
 const previewCanvas = $('#preview');
 const $$ = (sel) => [...document.querySelectorAll(sel)];
+const isIOS =
+  /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const isAndroid = /android/i.test(navigator.userAgent);
 // Mobile action bar and desktop panel each have their own copy of these.
 const downloadButtons = $$('.js-download');
 const shareButtons = $$('.js-share');
@@ -87,6 +90,46 @@ dropZone.addEventListener('drop', (e) => {
   dropZone.classList.remove('over');
   addFiles([...e.dataTransfer.files]);
 });
+
+// ---------- pasting a copied PDF ----------
+// iPhone can't put a web app in WhatsApp's share menu, but WhatsApp → Share → Copy puts
+// the PDF on the clipboard. Long-pressing the paste box brings up iOS's "Paste" menu.
+
+const pasteBox = $('#paste-box');
+pasteBox.dataset.placeholder = isIOS || isAndroid ? 'Copied a PDF? Long-press here → Paste' : 'Copied a PDF? Click here and press Ctrl+V';
+if (isIOS) {
+  $('#share-hint-text').innerHTML = 'From WhatsApp: PDF → <b>Share</b> → <b>Copy</b>, then paste it above';
+}
+// Nothing may be typed or dropped in; it only exists to receive a paste.
+pasteBox.addEventListener('beforeinput', (e) => e.preventDefault());
+pasteBox.addEventListener('drop', (e) => e.preventDefault());
+
+document.addEventListener('paste', async (e) => {
+  const pasted = clipboardFiles(e.clipboardData);
+  // Text pasted anywhere but the paste box is left alone.
+  if (!pasted.length && e.target !== pasteBox && !pasteBox.contains(e.target)) return;
+  e.preventDefault();
+  pasteBox.textContent = '';
+  pasteBox.blur();
+  const pdfs = (await Promise.all(pasted.map(asPdf))).filter(Boolean);
+  if (pdfs.length) addFiles(pdfs);
+  else if (pasted.length) toast('Only PDF files are supported');
+  else toast('No PDF copied — in WhatsApp tap Share → Copy first');
+});
+
+function clipboardFiles(data) {
+  if (!data) return [];
+  if (data.files?.length) return [...data.files];
+  return [...(data.items ?? [])].filter((i) => i.kind === 'file').map((i) => i.getAsFile()).filter(Boolean);
+}
+
+// Pasted files can arrive without a name or type, so check the bytes themselves.
+async function asPdf(f) {
+  const head = new Uint8Array(await f.slice(0, 1024).arrayBuffer());
+  if (!new TextDecoder('latin1').decode(head).includes('%PDF-')) return null;
+  const name = f.name && f.name.toLowerCase().endsWith('.pdf') ? f.name : `${f.name?.replace(/\.[^.]*$/, '') || 'Pasted label'}.pdf`;
+  return new File([f], name, { type: 'application/pdf' });
+}
 
 const isPdf = (f) => f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf');
 
@@ -464,10 +507,6 @@ function isStandalone() {
   return matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 }
 
-const isIOS =
-  /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-const isAndroid = /android/i.test(navigator.userAgent);
-
 // Chrome/Edge offer a real install prompt. iPhone (Safari and every iOS browser) never
 // does, so phones always get the button and fall back to step-by-step instructions.
 let installPrompt = null;
@@ -504,7 +543,7 @@ function showInstallHelp() {
         'Tap <b>Install</b>. Then share PDFs from WhatsApp → <b>Share</b> → <b>Label Cropper</b>.',
       ];
   const note = isIOS
-    ? '<p class="install-note">iPhone does not let web apps appear in the WhatsApp share menu. Save the PDF to Files, then use <b>+ Add more PDFs</b> here.</p>'
+    ? '<p class="install-note">iPhone does not let web apps appear in the WhatsApp share menu. Instead tap the PDF in WhatsApp → <b>Share</b> → <b>Copy</b>, then long-press the paste box here → <b>Paste</b>.</p>'
     : '';
   const modal = document.createElement('div');
   modal.className = 'modal';

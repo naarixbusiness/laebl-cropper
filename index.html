@@ -67,9 +67,12 @@
           </div>
           <input id="file-input" type="file" accept="application/pdf,.pdf" multiple hidden />
         </div>
+        <!-- Editable so phones offer their native "Paste" menu on long-press; nothing is ever typed into it. -->
+        <div id="paste-box" class="paste-box" contenteditable="true" inputmode="none" spellcheck="false"
+          role="button" aria-label="Paste a copied PDF"></div>
         <p id="share-hint" class="share-hint">
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4" /></svg>
-          <span>From WhatsApp: PDF → <b>Share</b> → <b>Label Cropper</b> (after installing the app)</span>
+          <span id="share-hint-text">From WhatsApp: PDF → <b>Share</b> → <b>Label Cropper</b> (after installing the app)</span>
         </p>
 
         <div id="progress" class="progress" hidden>
