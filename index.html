@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#4f46e5" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <title>Label Cropper</title>
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" type="image/png" href="./icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="./icons/icon-192.png" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <div class="logo" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M6 3v12a3 3 0 0 0 3 3h12M3 6h12a3 3 0 0 1 3 3v12" /></svg>
+        </div>
+        <div>
+          <h1>Label Cropper</h1>
+          <p>Meesho · Flipkart · Amazon → A4</p>
+        </div>
+      </div>
+      <div class="top-actions">
+        <button id="install" class="btn small primary" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v12m0 0-4-4m4 4 4-4M4 20h16" /></svg>
+          Install app
+        </button>
+        <div class="privacy" title="PDF tamara phone/computer par j process thay chhe, kyay upload nathi thati">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></svg>
+          <span>100% offline</span>
+        </div>
+      </div>
+    </header>
+
+    <main class="app">
+      <div class="col-main">
+        <div id="drop" class="drop" tabindex="0" role="button" aria-label="Label PDF select karo">
+          <svg class="drop-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 16V4m0 0-4 4m4-4 4 4" />
+            <path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
+          </svg>
+          <div class="drop-text">
+            <strong class="when-empty">Label PDF select karo</strong>
+            <strong class="when-filled">+ Vadhu PDF umero</strong>
+            <span class="when-empty">Tap karo athva drop karo — ek sathe ghani files</span>
+            <span class="when-filled">Juna labels rahese</span>
+          </div>
+          <input id="file-input" type="file" accept="application/pdf,.pdf" multiple hidden />
+        </div>
+        <p id="share-hint" class="share-hint">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4" /></svg>
+          <span>WhatsApp ma PDF → <b>Share</b> → <b>Label Cropper</b> (app install karya pachhi)</span>
+        </p>
+
+        <div id="progress" class="progress" hidden>
+          <div class="progress-text"><span id="progress-label"></span><span id="progress-count"></span></div>
+          <div class="progress-track"><div id="progress-bar" class="progress-bar"></div></div>
+        </div>
+
+        <ul id="errors" class="errors"></ul>
+
+        <div id="toolbar" class="toolbar" hidden>
+          <div id="filters" class="chips" role="tablist"></div>
+          <div class="bulk">
+            <button id="include-all" class="btn ghost small">Badha print</button>
+            <button id="skip-all" class="btn ghost small">Badha skip</button>
+          </div>
+        </div>
+
+        <div id="grid" class="grid"></div>
+        <div id="empty-filter" class="empty-filter" hidden>Aa filter ma koi label nathi.</div>
+      </div>
+
+      <aside class="panel">
+        <section id="settings" class="card-section">
+          <h2>Print settings</h2>
+          <label class="field">
+            <span>Labels per A4 sheet</span>
+            <select id="per-page"></select>
+          </label>
+          <label class="switch-row">
+            <span>Cut lines (kapva mate dashed line)</span>
+            <input id="cut-lines" type="checkbox" class="switch" checked />
+          </label>
+        </section>
+
+        <section id="preview-section" class="card-section">
+          <div class="preview-head">
+            <h2>Preview</h2>
+            <div class="pager">
+              <button id="prev-sheet" class="icon-btn" aria-label="Pachhli sheet">‹</button>
+              <span id="sheet-index">1 / 1</span>
+              <button id="next-sheet" class="icon-btn" aria-label="Aagli sheet">›</button>
+            </div>
+          </div>
+          <canvas id="preview" class="preview"></canvas>
+        </section>
+
+        <section class="card-section stats desktop-only">
+          <div><b id="stat-labels">0</b><span>labels</span></div>
+          <div><b id="stat-sheets">0</b><span>A4 sheets</span></div>
+          <div><b id="stat-skipped">0</b><span>skipped</span></div>
+        </section>
+
+        <div class="desktop-only actions-col">
+          <button id="download" class="btn primary block">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v12m0 0-4-4m4 4 4-4M4 20h16" /></svg>
+            Download A4 PDF
+          </button>
+          <button id="share-pdf" class="btn block" hidden>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4" /></svg>
+            Share PDF
+          </button>
+        </div>
+        <button id="clear" class="btn ghost block danger-text">Badhu clear karo</button>
+      </aside>
+    </main>
+
+    <!-- Mobile: always-visible action bar -->
+    <div class="bottom-bar">
+      <div class="bb-summary">
+        <b id="bb-labels">0</b> labels · <b id="bb-sheets">0</b> sheet
+        <small id="bb-skipped"></small>
+      </div>
+      <button id="share-pdf-m" class="btn icon-only" aria-label="PDF share karo" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4" /></svg>
+      </button>
+      <button id="download-m" class="btn primary">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v12m0 0-4-4m4 4 4-4M4 20h16" /></svg>
+        Download
+      </button>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
