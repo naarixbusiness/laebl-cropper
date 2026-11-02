@@ -9,6 +9,11 @@ export function openPdf(bytes) {
   return pdfjs.getDocument({ data: bytes.slice() }).promise;
 }
 
+// pdf.js 6 has no doc.destroy(); the loading task owns the worker-side document.
+export function closePdf(doc) {
+  return doc.loadingTask.destroy();
+}
+
 export function isPasswordError(err) {
   return err?.name === 'PasswordException';
 }

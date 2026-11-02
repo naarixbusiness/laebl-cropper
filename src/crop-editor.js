@@ -15,10 +15,10 @@ export async function editCrop(page, crop, platform) {
   modal.className = 'modal';
   modal.innerHTML = `
     <div class="modal-box">
-      <p class="hint">Label ni aaspaas aangli/mouse thi drag kari ne box doro.</p>
+      <p class="hint">Drag with your finger or mouse to draw a box around the label.</p>
       <div class="editor"></div>
       <div class="modal-actions">
-        <label><input type="checkbox" class="apply-all"> <span>Badha <b>${platform}</b> labels (page par aa j jagya) par lagavo</span></label>
+        <label><input type="checkbox" class="apply-all"> <span>Apply to all <b>${platform}</b> labels in this position on the page</span></label>
         <span class="spacer"></span>
         <button class="cancel">Cancel</button>
         <button class="save primary">Save</button>

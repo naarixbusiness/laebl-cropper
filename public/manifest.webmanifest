@@ -1,7 +1,7 @@
 {
   "name": "Label Cropper",
   "short_name": "Label Cropper",
-  "description": "Meesho, Flipkart, Amazon shipping labels crop kari ne A4 sheet par gothve chhe.",
+  "description": "Crops Meesho, Flipkart and Amazon shipping labels and lays them out on A4 sheets.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

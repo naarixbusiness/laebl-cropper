@@ -1,24 +1,26 @@
 # Label Cropper
 
-Meesho / Flipkart / Amazon shipping label PDF → fakt label crop → A4 sheet (1 thi 9 per page). Badhu phone/browser ma j thay chhe, koi file upload nathi thati.
+Turns Meesho / Flipkart / Amazon shipping-label PDFs into print-ready A4 sheets: crops just the label (invoices are dropped) and lays out 1–9 labels per page. Everything runs in the browser — no file is ever uploaded.
 
 ```bash
 npm install
-npm run dev       # computer par develop karva
+npm run dev       # local development
 npm test          # unit tests
-npm run build     # dist/ folder banave — aa j host karvanu
+npm run build     # builds dist/ — this is what gets hosted
 ```
 
-## Phone par vaparvu (WhatsApp share sathe)
+## Using it on a phone (with WhatsApp sharing)
 
-WhatsApp mathi "Share" karva mate app ne **HTTPS** website par mukvi pade (Netlify, Vercel, GitHub Pages, Cloudflare Pages — `dist/` folder upload karo). Pachhi:
+Sharing from WhatsApp needs the app on an **HTTPS** site (this repo deploys to Netlify via `netlify.toml`). Then:
 
-1. Phone na Chrome ma website kholo → **Install app** (athva menu → *Add to Home screen*).
-2. WhatsApp ma label PDF par long-press → **Share** → **Label Cropper**.
-3. App khulse ane PDF juna labels sathe umerai jase. Ek j file be var aave to duplicate nahi thay.
+1. Open the site in Chrome on the phone → **Install app** (or menu → *Add to Home screen*).
+2. In WhatsApp, long-press a label PDF → **Share** → **Label Cropper**.
+3. The app opens and adds the PDF to the labels you already have. Sharing the same file twice does not duplicate it.
 
-Share target fakt Android Chrome ma chale chhe; iPhone par app ma "+ Vadhu PDF umero" thi file pasand karo.
+The share target works on Android Chrome only; on iPhone use **+ Add more PDFs** inside the app.
 
-Labels phone na browser storage ma save rahe chhe — app band kari ne kholo to pan rahe. **Badhu clear karo** thi j jay.
+Labels are saved in the browser's storage on the device, so they survive closing the app. **Clear everything** removes them.
 
-Real label PDFs `samples/` ma rakho — aa folder git ma nathi jatu.
+The platform filter (All / Amazon / Meesho / Flipkart) also decides what is previewed and downloaded.
+
+Keep real label PDFs in `samples/` — that folder is git-ignored.

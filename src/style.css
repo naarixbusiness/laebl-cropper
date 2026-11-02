@@ -11,7 +11,6 @@
   --radius: 12px;
   --shadow: 0 1px 2px rgb(16 24 40 / 0.05), 0 1px 3px rgb(16 24 40 / 0.06);
   --shadow-lg: 0 12px 32px rgb(16 24 40 / 0.14);
-  --bar-h: 64px;
 }
 
 * {
@@ -24,7 +23,8 @@ body {
   color: var(--text);
   background: var(--bg);
   -webkit-font-smoothing: antialiased;
-  padding-bottom: calc(var(--bar-h) + env(safe-area-inset-bottom));
+  /* room to scroll past host badges (e.g. "Powered by Netlify") at the bottom */
+  padding-bottom: calc(80px + env(safe-area-inset-bottom));
 }
 svg {
   fill: none;
@@ -38,10 +38,12 @@ svg {
 }
 
 /* ---------- top bar ---------- */
-.topbar {
+.top-stack {
   position: sticky;
   top: 0;
   z-index: 10;
+}
+.topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -369,7 +371,7 @@ svg {
 .toast {
   position: fixed;
   left: 50%;
-  bottom: calc(var(--bar-h) + 16px + env(safe-area-inset-bottom));
+  bottom: calc(90px + env(safe-area-inset-bottom));
   transform: translate(-50%, 20px);
   max-width: calc(100% - 32px);
   background: #111827;
@@ -681,41 +683,46 @@ select:focus {
     0 6px 20px rgb(16 24 40 / 0.1);
 }
 
-/* ---------- mobile bottom bar ---------- */
-.bottom-bar {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 10;
+/* ---------- mobile action bar (under the header) ---------- */
+.action-bar {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: var(--bar-h);
-  padding: 10px 14px;
-  padding-bottom: calc(10px + env(safe-area-inset-bottom));
+  padding: 8px 14px;
   background: rgb(255 255 255 / 0.96);
   backdrop-filter: blur(10px);
-  border-top: 1px solid var(--border);
-  box-shadow: 0 -4px 16px rgb(16 24 40 / 0.06);
+  border-bottom: 1px solid var(--border);
+  box-shadow: 0 4px 16px rgb(16 24 40 / 0.06);
 }
-.bb-summary {
+.ab-summary {
   flex: 1;
   min-width: 0;
   font-size: 13.5px;
   color: var(--muted);
   line-height: 1.3;
 }
-.bb-summary b {
+.ab-summary b {
   color: var(--text);
   font-size: 16px;
 }
-.bb-summary small {
+.ab-summary small {
   display: block;
   font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.bottom-bar .btn.primary {
+.action-bar .btn.primary {
   padding: 10px 18px;
+}
+.scope-note {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--muted);
+  text-align: center;
+}
+.scope-note:empty {
+  display: none;
 }
 
 /* ---------- crop editor modal ---------- */
@@ -821,7 +828,7 @@ select:focus {
 /* ---------- desktop ---------- */
 @media (min-width: 960px) {
   body {
-    padding-bottom: 0;
+    padding-bottom: 40px;
   }
   .topbar {
     padding: 14px 28px;
@@ -871,7 +878,7 @@ select:focus {
     flex-direction: column;
     gap: 8px;
   }
-  .bottom-bar {
+  .action-bar {
     display: none;
   }
   .drop {
@@ -933,5 +940,71 @@ select:focus {
     .edit-btn:focus-visible {
       opacity: 1;
     }
+  }
+}
+
+/* ---------- install instructions ---------- */
+.install-box {
+  width: min(420px, 100%);
+  padding: 20px;
+}
+.install-box h2 {
+  margin: 0 0 14px;
+  font-size: 18px;
+}
+.install-steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: step;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.install-steps li {
+  counter-increment: step;
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  font-size: 15px;
+  line-height: 1.45;
+}
+.install-steps li::before {
+  content: counter(step);
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-weight: 700;
+  font-size: 13px;
+}
+.inline-icon {
+  width: 18px;
+  height: 18px;
+  vertical-align: -3px;
+  color: var(--primary);
+}
+.install-note {
+  margin: 14px 0 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  color: #92400e;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+/* Small phones: keep the header on one line when the Install button is showing. */
+@media (max-width: 480px) {
+  .privacy span {
+    display: none;
+  }
+  .privacy {
+    padding: 6px;
   }
 }

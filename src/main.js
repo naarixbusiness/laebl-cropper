@@ -3,7 +3,7 @@ import { buildSheets, canEmbedVector } from './compose.js';
 import { editCrop } from './crop-editor.js';
 import { detectLabels } from './detect.js';
 import { SUPPORTED_PER_PAGE, chunk, gridFor } from './layout.js';
-import { cropCanvas, isPasswordError, openPdf, readPage, renderPage, viewCropToPdfBox } from './pdf-read.js';
+import { closePdf, cropCanvas, isPasswordError, openPdf, readPage, renderPage, viewCropToPdfBox } from './pdf-read.js';
 import { drawSheetPreview } from './preview.js';
 import * as store from './store.js';
 
@@ -26,15 +26,17 @@ const errors = $('#errors');
 const perPageSelect = $('#per-page');
 const cutLinesInput = $('#cut-lines');
 const previewCanvas = $('#preview');
-const downloadButtons = [$('#download'), $('#download-m')];
-const shareButtons = [$('#share-pdf'), $('#share-pdf-m')];
+const $$ = (sel) => [...document.querySelectorAll(sel)];
+// Mobile action bar and desktop panel each have their own copy of these.
+const downloadButtons = $$('.js-download');
+const shareButtons = $$('.js-share');
 
 // ---------- settings ----------
 
 for (const n of SUPPORTED_PER_PAGE) {
   const { cols, rows } = gridFor(n);
   const empty = cols * rows - n;
-  perPageSelect.append(new Option(`${n} label${n > 1 ? 's' : ''}  ·  ${cols} × ${rows}${empty ? ` (${empty} khali)` : ''}`, n));
+  perPageSelect.append(new Option(`${n} label${n > 1 ? 's' : ''}  ·  ${cols} × ${rows}${empty ? ` (${empty} empty)` : ''}`, n));
 }
 const saved = loadSettings();
 perPageSelect.value = String(saved.perPage ?? 4);
@@ -98,12 +100,12 @@ async function addFiles(list) {
     if (files.has(key) || fresh.some((r) => r.key === key)) duplicates++;
     else fresh.push({ key, name: f.name, size: f.size, blob: f, addedAt: Date.now() + fresh.length });
   }
-  if (list.length > pdfs.length) toast('Fakt PDF files chale chhe');
-  if (duplicates) toast(`${duplicates} file pehla thi umereli chhe`);
+  if (list.length > pdfs.length) toast('Only PDF files are supported');
+  if (duplicates) toast(`${duplicates} file${duplicates > 1 ? 's are' : ' is'} already added`);
   if (!fresh.length) return;
   await Promise.all(fresh.map((r) => store.saveFile(r)));
   const added = await processRecords(fresh, new Map());
-  if (added) toast(`${added} label umeraya`);
+  if (added) toast(`${added} label${added > 1 ? 's' : ''} added`);
 }
 
 // Restores everything saved earlier (including files shared from WhatsApp by the
@@ -124,7 +126,7 @@ async function processRecords(records, overrides) {
         showProgress(record.name, i, records.length, page, total),
       );
     } catch (err) {
-      const msg = isPasswordError(err) ? 'password-protected PDF chhe' : `vanchi na shakayu (${err.message})`;
+      const msg = isPasswordError(err) ? 'PDF is password-protected' : `could not read (${err.message})`;
       showError(`${record.name}: ${msg}`);
       files.delete(record.key);
       await store.deleteFile(record.key);
@@ -216,8 +218,8 @@ function renderFilters() {
   if (filter !== 'all' && !counts[filter]) filter = 'all';
 
   const chips = [
-    ['all', 'Badha'],
-    ...PLATFORMS.filter((p) => counts[p]).map((p) => [p, p[0].toUpperCase() + p.slice(1)]),
+    ['all', 'All'],
+    ...PLATFORMS.filter((p) => counts[p]).map((p) => [p, capitalize(p)]),
     ...(counts.skipped ? [['skipped', 'Skipped']] : []),
   ];
   const box = $('#filters');
@@ -230,6 +232,7 @@ function renderFilters() {
     chip.innerHTML = `${PLATFORMS.includes(key) ? `<span class="dot ${key}"></span>` : ''}${text}<span class="count">${counts[key]}</span>`;
     chip.addEventListener('click', () => {
       filter = key;
+      sheetIndex = 0;
       render();
     });
     box.append(chip);
@@ -259,7 +262,7 @@ function renderCard(label) {
     </div>
     <div class="card-foot">
       <span class="card-name" title="${escapeHtml(file.name)}"><b>${where}</b> · ${escapeHtml(file.name)}</span>
-      <input type="checkbox" class="switch" title="Print ma levu" aria-label="Print ma levu" ${label.skip ? '' : 'checked'} />
+      <input type="checkbox" class="switch" title="Include in print" aria-label="Include in print" ${label.skip ? '' : 'checked'} />
     </div>`;
   card.querySelector('.thumb').prepend(label.thumb);
   card.querySelector('.switch').addEventListener('change', (e) => {
@@ -289,8 +292,8 @@ $('#include-all').addEventListener('click', () => setSkipForVisible(false));
 $('#skip-all').addEventListener('click', () => setSkipForVisible(true));
 
 $('#clear').addEventListener('click', async () => {
-  if (!confirm('Badha labels kaadhi nakhva chhe?')) return;
-  for (const f of files.values()) f.doc.destroy();
+  if (!confirm('Remove all labels?')) return;
+  await Promise.all([...files.values()].map((f) => closePdf(f.doc)));
   files.clear();
   labels = [];
   errors.innerHTML = '';
@@ -298,7 +301,7 @@ $('#clear').addEventListener('click', async () => {
   sheetIndex = 0;
   await store.clearAll();
   render();
-  toast('Badhu clear thai gayu');
+  toast('Everything cleared');
 });
 
 async function onEdit(label) {
@@ -313,7 +316,7 @@ async function onEdit(label) {
           (l.platform === label.platform && l.index === label.index && l.reason !== 'invoice page'),
       )
     : [label];
-  toast('Previews update thay chhe…');
+  toast('Updating previews…');
   for (const target of targets) {
     const page = await files.get(target.fileId).doc.getPage(target.pageIndex + 1);
     const { width, height } = page.getViewport({ scale: 1 });
@@ -335,20 +338,28 @@ function clampCrop(c, width, height) {
 
 // ---------- summary + preview ----------
 
+// What gets previewed and downloaded: the labels of the selected platform filter
+// ("All" and "Skipped" print every platform), minus skipped ones.
+function printFilter() {
+  return PLATFORMS.includes(filter) ? filter : null;
+}
 function activeLabels() {
-  return labels.filter((l) => !l.skip);
+  const platform = printFilter();
+  return labels.filter((l) => !l.skip && (!platform || l.platform === platform));
 }
 
 function updateSummary() {
   const active = activeLabels().length;
   const sheetCount = Math.ceil(active / perPage());
-  const skipped = labels.length - active;
-  $('#stat-labels').textContent = active;
-  $('#stat-sheets').textContent = sheetCount;
+  const skipped = labels.filter((l) => l.skip).length;
+  const platform = printFilter();
+  for (const el of $$('.js-labels')) el.textContent = active;
+  for (const el of $$('.js-sheets')) el.textContent = sheetCount;
+  for (const el of $$('.js-labels-word')) el.textContent = active === 1 ? 'label' : 'labels';
+  for (const el of $$('.js-sheets-word')) el.textContent = sheetCount === 1 ? 'sheet' : 'sheets';
   $('#stat-skipped').textContent = skipped;
-  $('#bb-labels').textContent = active;
-  $('#bb-sheets').textContent = sheetCount;
-  $('#bb-skipped').textContent = skipped ? `${skipped} skipped` : '';
+  const scope = platform ? `Printing ${capitalize(platform)} labels only` : skipped ? `${skipped} skipped` : '';
+  for (const el of $$('.js-scope')) el.textContent = scope;
   for (const b of [...downloadButtons, ...shareButtons]) b.disabled = busy || active === 0;
   $('#clear').hidden = labels.length === 0;
   $('#clear').disabled = busy;
@@ -388,7 +399,7 @@ for (const b of shareButtons) b.hidden = !canShareFiles();
 async function exportPdf(mode) {
   busy = true;
   updateSummary();
-  toast('PDF banavi rahya chhiye…');
+  toast('Creating PDF…');
   try {
     const items = [];
     for (const label of activeLabels()) {
@@ -403,7 +414,8 @@ async function exportPdf(mode) {
       renderLabelPng,
       { cutLines: cutLinesInput.checked },
     );
-    const name = `labels-${new Date().toISOString().slice(0, 10)}.pdf`;
+    const platform = printFilter();
+    const name = `labels-${platform ? `${platform}-` : ''}${new Date().toISOString().slice(0, 10)}.pdf`;
     if (mode === 'share') {
       try {
         await navigator.share({ files: [new File([bytes], name, { type: 'application/pdf' })], title: name });
@@ -414,9 +426,9 @@ async function exportPdf(mode) {
       }
     }
     downloadFile(bytes, name);
-    toast(`✓ ${name} download thai`);
+    toast(`✓ ${name} downloaded`);
   } catch (err) {
-    showError(`PDF banavva ma error: ${err.message}`);
+    showError(`Could not create PDF: ${err.message}`);
   } finally {
     busy = false;
     updateSummary();
@@ -438,6 +450,10 @@ function downloadFile(bytes, name) {
   setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
+function capitalize(s) {
+  return s[0].toUpperCase() + s.slice(1);
+}
+
 function escapeHtml(s) {
   return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 }
@@ -448,22 +464,65 @@ function isStandalone() {
   return matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 }
 
+const isIOS =
+  /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const isAndroid = /android/i.test(navigator.userAgent);
+
+// Chrome/Edge offer a real install prompt. iPhone (Safari and every iOS browser) never
+// does, so phones always get the button and fall back to step-by-step instructions.
 let installPrompt = null;
+$('#install').hidden = isStandalone() || !(isIOS || isAndroid);
 window.addEventListener('beforeinstallprompt', (e) => {
   e.preventDefault();
   installPrompt = e;
   $('#install').hidden = false;
 });
 $('#install').addEventListener('click', async () => {
-  if (!installPrompt) return;
+  if (!installPrompt) {
+    showInstallHelp();
+    return;
+  }
   installPrompt.prompt();
-  await installPrompt.userChoice;
+  const { outcome } = await installPrompt.userChoice;
   installPrompt = null;
-  $('#install').hidden = true;
+  if (outcome === 'accepted') $('#install').hidden = true;
 });
+
+const SHARE_ICON =
+  '<svg viewBox="0 0 24 24" class="inline-icon" aria-hidden="true"><path d="M12 15V3m0 0L8 7m4-4 4 4"/><path d="M5 11v8a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-8"/></svg>';
+
+function showInstallHelp() {
+  const steps = isIOS
+    ? [
+        `Tap the <b>Share</b> button ${SHARE_ICON} — at the bottom in Safari, top-right in Chrome.`,
+        'Scroll down and tap <b>Add to Home Screen</b>.',
+        'Tap <b>Add</b>. Label Cropper now opens from your home screen like an app.',
+      ]
+    : [
+        'Tap the browser menu <b>⋮</b> (top-right).',
+        'Tap <b>Install app</b> or <b>Add to Home screen</b>.',
+        'Tap <b>Install</b>. Then share PDFs from WhatsApp → <b>Share</b> → <b>Label Cropper</b>.',
+      ];
+  const note = isIOS
+    ? '<p class="install-note">iPhone does not let web apps appear in the WhatsApp share menu. Save the PDF to Files, then use <b>+ Add more PDFs</b> here.</p>'
+    : '';
+  const modal = document.createElement('div');
+  modal.className = 'modal';
+  modal.innerHTML = `
+    <div class="modal-box install-box" role="dialog" aria-modal="true" aria-labelledby="install-title">
+      <h2 id="install-title">Install Label Cropper</h2>
+      <ol class="install-steps">${steps.map((s) => `<li><span>${s}</span></li>`).join('')}</ol>
+      ${note}
+      <div class="modal-actions"><span class="spacer"></span><button class="primary">Got it</button></div>
+    </div>`;
+  const close = () => modal.remove();
+  modal.querySelector('button').addEventListener('click', close);
+  modal.addEventListener('click', (e) => e.target === modal && close());
+  document.body.append(modal);
+}
 window.addEventListener('appinstalled', () => {
   $('#install').hidden = true;
-  toast('App install thai gai — have WhatsApp mathi PDF share kari shakaso');
+  toast('App installed — you can now share PDFs to it from WhatsApp');
 });
 
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {
@@ -480,6 +539,6 @@ if (shared !== null) history.replaceState(null, '', location.pathname);
 render();
 restore().then(() => {
   if (shared === null) return;
-  if (Number(shared)) toast(`WhatsApp mathi ${shared} PDF umerai`);
-  else if (ignored) toast('Aa PDF pehla thi umereli chhe');
+  if (Number(shared)) toast(`${shared} shared PDF${Number(shared) > 1 ? 's' : ''} added`);
+  else if (ignored) toast('This PDF is already added');
 });
