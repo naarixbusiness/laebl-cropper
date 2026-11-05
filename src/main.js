@@ -748,23 +748,32 @@ function showInstallHelp() {
 // problem: optional line explaining why the help opened (e.g. nothing to paste).
 function showPasteHelp(problem) {
   const intro = problem ? `<p class="install-note warn">${escapeHtml(problem)}</p>` : '';
+  // Two shortcuts: one in the share sheet collects labels into a file (so many labels can
+  // be sent without opening this app), one copies them all at once for "Paste PDF".
   const body = isIOS
     ? `${intro}
-      <h3>One-time setup (2 minutes)</h3>
+      <h3>Shortcut 1 — “Label Cropper” (share menu)</h3>
       ${stepList([
-        'Open the <b>Shortcuts</b> app → tap <b>+</b> → name it <b>Label Cropper</b>.',
-        'Tap <b>ⓘ</b> (or the name at the top → <b>Details</b>) → turn on <b>Show in Share Sheet</b>. In the first action tap <b>Any</b> / <b>Images and more</b> and keep only <b>PDFs</b>.',
-        'Add the action <b>Base64 Encode</b> → tap ▸ → <b>Line Breaks: None</b>.',
-        'Add <b>Combine Text</b> → <b>New Lines</b> (lets you send several PDFs at once).',
-        'Add <b>Copy to Clipboard</b>. Optional: add <b>Show Notification</b> “Open Label Cropper and tap Paste”.',
+        'Shortcuts app → <b>+</b> → name it <b>Label Cropper</b>.',
+        'Add <b>Base64 Encode</b> → tap <b>Input</b> → <b>Shortcut Input</b> → in the new top block tap <b>Nowhere</b> → <b>Share Sheet</b>. Set <b>Line Breaks: None</b>.',
+        'Add <b>Combine Text</b> → <b>New Lines</b>.',
+        'Add <b>Append to Text File</b> → file path <b>labels.txt</b>, <b>Make New Line</b> on.',
+      ])}
+      <h3>Shortcut 2 — “Labels Paste”</h3>
+      ${stepList([
+        'Shortcuts app → <b>+</b> → name it <b>Labels Paste</b>.',
+        'Add <b>Get File from Folder</b> → path <b>labels.txt</b>.',
+        'Add <b>Copy to Clipboard</b>.',
+        'Add <b>Delete Files</b> → turn off <b>Confirm Before Deleting</b>.',
+        'Name at the top → <b>Add to Home Screen</b>.',
       ])}
       <h3>Every day</h3>
       ${stepList([
-        'WhatsApp: open the PDF → <b>Share</b> → <b>Label Cropper</b>.',
-        'Open this app → <b>Paste PDF</b> → tap <b>Paste</b>.',
+        'Each label: Amazon / WhatsApp → <b>Share</b> → <b>Label Cropper</b>. Stay in that app and do the next one.',
+        'When all are sent: tap <b>Labels Paste</b> on the home screen.',
+        'Open this app → <b>Paste PDF</b> → <b>Paste</b>. All labels come in at once.',
       ])}
-      <p class="install-note">No shortcut? WhatsApp → <b>Share</b> → <b>Save to Files</b>, then tap <b>Select label PDFs</b> here → <b>Recents</b>.</p>
-      <p class="install-note">Amazon Seller app labels are images: <b>Share</b> → <b>Copy</b>, then tap <b>Paste PDF</b> here — no shortcut needed.</p>`
+      <p class="install-note">No shortcut? WhatsApp → <b>Share</b> → <b>Save to Files</b>, then tap <b>Select label PDFs</b> here → <b>Recents</b>. Amazon Seller app labels are images: <b>Share</b> → <b>Copy</b> → <b>Paste PDF</b> works too.</p>`
     : `${intro}
       ${stepList([
         'Copy a PDF file (Files / Explorer / Finder), then press <b>Ctrl+V</b> (<b>⌘+V</b>) anywhere on this page.',
@@ -772,7 +781,7 @@ function showPasteHelp(problem) {
           ? 'From WhatsApp: install this app, then PDF → <b>Share</b> → <b>Label Cropper</b>.'
           : 'Or drop PDF files on the <b>Select label PDFs</b> box.',
       ])}`;
-  showModal(isIOS ? 'Send PDFs from WhatsApp (iPhone)' : 'Paste a PDF', body);
+  showModal(isIOS ? 'Send labels from Amazon / WhatsApp (iPhone)' : 'Paste a PDF', body);
 }
 
 function stepList(steps) {
