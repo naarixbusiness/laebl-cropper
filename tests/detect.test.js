@@ -181,4 +181,23 @@ describe('detectLabels', () => {
     expect(r[0].crop).toEqual({ x: 18, y: 18, w: 244, h: 364 });
     expect(r[1].crop).toEqual({ x: 18, y: 448, w: 244, h: 364 });
   });
+
+  // Seen on iPhone: the label image didn't show up in the render, so the only ink in the
+  // label column was the dashed cut line and the "label" became a thin strip.
+  it('keeps the whole label area when the only ink is a cut line', () => {
+    const image = blankImage(300, 421);
+    fillRect(image, 160, 10, 130, 150); // invoice on the right
+    for (let x = 0; x < 300; x += 6) fillRect(image, x, 207, 3, 1); // dashed cut line at y 414pt
+    const items = [{ str: 'Tax Invoice/Bill of Supply/Cash Memo', top: 7, left: 452 }];
+    const [r] = detectLabels({ width: 600, height: 842, text: 'Amazon', items, image, scale: 0.5 });
+    expect(r.skip).toBe(false);
+    expect(r.crop).toEqual({ x: 0, y: 0, w: 294, h: 842 });
+  });
+
+  it('keeps the whole label area when the only ink is a thin line in a top-half preset', () => {
+    const image = blankImage(300, 421);
+    fillRect(image, 0, 100, 300, 1);
+    const [r] = detectLabels({ width: 600, height: 842, text: 'Meesho', items: [], image, scale: 0.5 });
+    expect(r.crop).toEqual({ x: 0, y: 0, w: 600, h: 421 });
+  });
 });
