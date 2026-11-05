@@ -1,7 +1,8 @@
 // Label detection. Works in "view space": points, origin top-left, y grows down
 // (pdf.js viewport at scale 1), so it matches what the user sees on screen.
 
-import { findOrderId } from './order-id.js';
+import { readCode128 } from './barcode.js';
+import { awbId, findOrderId } from './order-id.js';
 import { LABEL_HEIGHT_FRACTION } from './presets.js';
 
 // Checked in order. Meesho label PDFs often don't contain the word "Meesho",
@@ -35,6 +36,14 @@ const LABEL_PAGE_MAX_HEIGHT = 500;
 export function detectPlatform(text) {
   for (const [platform, re] of PLATFORM_KEYWORDS) if (re.test(text)) return platform;
   return 'unknown';
+}
+
+// Platform named by the PDF's metadata (e.g. Creator "AmazonSeller"), or null.
+export function platformFromMetadata(info) {
+  if (!info) return null;
+  const text = [info.Creator, info.Producer, info.Title, info.Author, info.Subject].filter(Boolean).join(' ');
+  const platform = detectPlatform(text);
+  return platform === 'unknown' ? null : platform;
 }
 
 // items: [{ str, top, left }] in view space. Returns the invoice headings, top to bottom.
@@ -136,14 +145,20 @@ export function inkBox(image, region, { threshold = 235, gap = 4, thin = 3 } = {
 }
 
 // Full detection for one page.
-// page: { width, height, text, items: [{ str, top, left }], image, scale }
-//   image is the page rendered at `scale` (RGBA ImageData-like).
+// page: { width, height, text, items: [{ str, top, left }], image, scale, platformHint? }
+//   image is the page rendered at `scale` (RGBA ImageData-like); platformHint is the
+//   platform known from the file itself (metadata / image source), used when the page's
+//   own text doesn't name one.
 // Returns one entry per label found: { platform, skip, reason?, crop: { x, y, w, h }, orderId, uid }
 // (crop in view-space points). Invoice-only or blank pages give a single skipped entry,
 // with no order ID: an invoice must never stand in for its label as the "original".
 export function detectLabels(page) {
-  const platform = detectPlatform(page.text);
-  const regions = labelRegions(page.items, platform, page.width, page.height);
+  const printed = detectPlatform(page.text);
+  const platform = printed === 'unknown' ? (page.platformHint ?? 'unknown') : printed;
+  // Layout presets follow only what's printed on the page: a label image hinted "amazon"
+  // must not be cut to the top half like an Amazon label-plus-invoice page.
+  const regions = labelRegions(page.items, printed, page.width, page.height);
+  const hasText = page.items.length > 0;
   if (!regions.length) return [{ platform, skip: true, reason: 'invoice page', crop: fullPage(page), ...NO_ID }];
 
   const s = page.scale;
@@ -155,7 +170,7 @@ export function detectLabels(page) {
     const y = Math.max(r.y, box.y / s - PADDING);
     const right = Math.min(r.x + r.w, (box.x + box.w) / s + PADDING);
     const lower = Math.min(r.y + r.h, (box.y + box.h) / s + PADDING);
-    const id = findOrderId(platform, rowText(page.items, r));
+    const id = hasText ? findOrderId(platform, rowText(page.items, r)) : awbId(readCode128(subImage(page.image, box)));
     labels.push({ platform, skip: false, crop: { x, y, w: right - x, h: lower - y }, ...NO_ID, ...id });
   }
   return labels.length ? labels : [{ platform, skip: true, reason: 'blank', crop: fullPage(page), ...NO_ID }];
@@ -170,6 +185,16 @@ export function rowText(items, region) {
     .filter((it) => it.top >= region.y && it.top < region.y + region.h)
     .map((it) => it.str)
     .join(' ');
+}
+
+// Pixel box of an RGBA image, as a new image.
+export function subImage(image, box) {
+  const data = new Uint8ClampedArray(box.w * box.h * 4);
+  for (let row = 0; row < box.h; row++) {
+    const from = ((box.y + row) * image.width + box.x) * 4;
+    data.set(image.data.subarray(from, from + box.w * 4), row * box.w * 4);
+  }
+  return { width: box.w, height: box.h, data };
 }
 
 function fullPage(page) {

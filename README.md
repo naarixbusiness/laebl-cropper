@@ -34,6 +34,7 @@ Each label's order ID is read from the PDF (Meesho sub-order `…_1`, Flipkart `
 
 - **Duplicates** — the same order loaded twice (in one PDF or across PDFs) is printed once; later copies are tagged *Duplicate*.
 - **Print history** — every Download/Share saves the included orders as printed. When they turn up again they're tagged *Printed · date*. *Include already printed labels* (Print settings) decides whether they go into the PDF; to reprint one torn label, just switch that card on. **Clear history** forgets them all.
+- Label **images** (PNG / JPG, with or without a file extension — e.g. Amazon Seller app labels) and PDFs that only wrap such an image have no text to read. For those the **AWB barcode** is read instead (shown as *AWB …*), so duplicates and print history work the same way. The platform comes from the file itself (PDF creator *AmazonSeller*, PNG made by Labelary); when it can't be told — e.g. an image re-encoded by copy-paste — the card's *Platform?* badge lets you pick it.
 - A label whose order ID can't be read with certainty shows *No order ID found* and is never merged or marked printed.
 
 History is stored on the device only (each browser / installed app has its own).
