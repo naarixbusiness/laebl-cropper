@@ -34,11 +34,3 @@ export function findOrderId(platform, text) {
   if (awbs.length > 1) return null;
   return { orderId, uid: [platform, orderId, ...awbs].join(':') };
 }
-
-// Labels that are pure images have no text to read; their AWB barcode identifies the
-// shipment instead. Exactly one distinct barcode is required, as with order numbers.
-export function awbId(codes) {
-  const valid = [...new Set(codes.map((c) => c.trim().toUpperCase()))].filter((c) => /^[A-Z0-9]{8,30}$/.test(c));
-  if (valid.length !== 1) return null;
-  return { orderId: `AWB ${valid[0]}`, uid: `awb:${valid[0]}` };
-}

@@ -50,10 +50,7 @@ self.addEventListener('fetch', (event) => {
 async function receiveShare(request) {
   const form = await request.formData();
   const shared = form.getAll('files').filter((f) => typeof f !== 'string');
-  // PDFs and label images (the app turns images into a PDF when it loads them).
-  const pdfs = shared.filter(
-    (f) => ['application/pdf', 'image/png', 'image/jpeg'].includes(f.type) || /\.(pdf|png|jpe?g)$/i.test(f.name),
-  );
+  const pdfs = shared.filter((f) => f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf'));
   let added = 0;
   const db = await openDb();
   for (const file of pdfs) {

@@ -1,12 +1,11 @@
 import './style.css';
 import { buildSheets, canEmbedVector } from './compose.js';
 import { editCrop } from './crop-editor.js';
-import { detectLabels, platformFromMetadata } from './detect.js';
+import { detectLabels } from './detect.js';
 import { clearHistory, loadHistory, recordPrinted } from './history.js';
 import { SUPPORTED_PER_PAGE, chunk, gridFor } from './layout.js';
 import { closePdf, cropCanvas, isPasswordError, openPdf, readPage, renderPage, viewCropToPdfBox } from './pdf-read.js';
-import { asPdfBytes, fileKind } from './image-input.js';
-import { contentName, filesFromText } from './paste.js';
+import { contentName, pdfsFromText } from './paste.js';
 import { drawSheetPreview } from './preview.js';
 import * as store from './store.js';
 
@@ -111,7 +110,7 @@ dropZone.addEventListener('drop', (e) => {
 // iPhone (Safari, Chrome and home-screen apps are all WebKit) never gives a web page a
 // copied PDF file, only images. So on iPhone an iOS Shortcut in WhatsApp's share menu
 // copies the PDF as base64 text, and "Paste PDF" turns it back into the original file.
-// Label images (Amazon Seller app) paste directly. Desktop: Ctrl/⌘+V works too.
+// Desktop: Ctrl/⌘+V of a copied PDF file works too.
 
 if (isIOS) {
   $('#share-hint-text').innerHTML =
@@ -119,30 +118,19 @@ if (isIOS) {
 }
 for (const el of $$('.js-paste-help')) el.addEventListener('click', () => showPasteHelp());
 
-const IMAGE_TYPES = ['image/png', 'image/jpeg'];
-
 $('#paste-btn').addEventListener('click', async () => {
-  try {
-    // iOS shows its "Paste" bubble before either call returns.
-    if (navigator.clipboard?.read) {
-      const images = [];
-      let text = '';
-      for (const item of await navigator.clipboard.read()) {
-        const type = IMAGE_TYPES.find((t) => item.types.includes(t));
-        if (type) images.push(await item.getType(type));
-        else if (item.types.includes('text/plain')) text += `\n${await (await item.getType('text/plain')).text()}`;
-      }
-      if (images.length) addFiles(await Promise.all(images.map((blob) => pastedFile(new File([blob], '')))));
-      else addPastedText(text);
-    } else if (navigator.clipboard?.readText) {
-      addPastedText(await navigator.clipboard.readText());
-    } else {
-      showPasteHelp('This browser can’t read the clipboard here — press Ctrl+V (⌘+V) instead.');
-    }
-  } catch (err) {
-    // NotAllowedError: the "Paste" bubble was dismissed (or permission refused).
-    if (err.name !== 'NotAllowedError') showPasteHelp(`Could not read the clipboard (${err.message}).`);
+  if (!navigator.clipboard?.readText) {
+    showPasteHelp('This browser can’t read the clipboard here — press Ctrl+V (⌘+V) instead.');
+    return;
   }
+  let text;
+  try {
+    text = await navigator.clipboard.readText(); // iOS shows its "Paste" bubble first
+  } catch (err) {
+    if (err.name !== 'NotAllowedError') showPasteHelp(`Could not read the clipboard (${err.message}).`);
+    return; // NotAllowedError: the "Paste" bubble was dismissed
+  }
+  addPastedText(text);
 });
 
 document.addEventListener('paste', async (e) => {
@@ -151,14 +139,19 @@ document.addEventListener('paste', async (e) => {
   const pasted = clipboardFiles(e.clipboardData);
   const text = pasted.length ? '' : (e.clipboardData?.getData('text/plain') ?? '');
   e.preventDefault();
-  if (pasted.length) addFiles(await Promise.all(pasted.map(pastedFile)));
-  else addPastedText(text);
+  if (!pasted.length) {
+    addPastedText(text);
+    return;
+  }
+  const pdfs = (await Promise.all(pasted.map(asPdf))).filter(Boolean);
+  if (pdfs.length) addFiles(pdfs);
+  else toast('Only PDF files are supported');
 });
 
 function addPastedText(text) {
-  const found = filesFromText(text);
-  if (found.length) addFiles(found.map((bytes) => new File([bytes], contentName(bytes))));
-  else showPasteHelp('No PDF or label image on the clipboard.');
+  const pdfs = pdfsFromText(text);
+  if (pdfs.length) addFiles(pdfs.map((bytes) => new File([bytes], contentName(bytes), { type: 'application/pdf' })));
+  else showPasteHelp('No PDF on the clipboard.');
 }
 
 function clipboardFiles(data) {
@@ -167,31 +160,27 @@ function clipboardFiles(data) {
   return [...(data.items ?? [])].filter((i) => i.kind === 'file').map((i) => i.getAsFile()).filter(Boolean);
 }
 
-// Pasted files often have no name or a generic one ("image.png"). Files are deduped by
-// name + size, so those get a name from their contents instead.
-async function pastedFile(f) {
-  if (f.name && !/^image\.\w+$/i.test(f.name)) return f;
+// Pasted files can arrive without a name or type, so check the bytes themselves.
+async function asPdf(f) {
   const bytes = new Uint8Array(await f.arrayBuffer());
-  return new File([bytes], contentName(bytes), { type: f.type });
+  if (!new TextDecoder('latin1').decode(bytes.subarray(0, 1024)).includes('%PDF-')) return null;
+  const name = f.name?.toLowerCase().endsWith('.pdf') ? f.name : contentName(bytes);
+  return new File([bytes], name, { type: 'application/pdf' });
 }
 
-// What a file really is, from its first bytes (Amazon label PNGs often have no extension).
-async function kindOf(f) {
-  return fileKind(new Uint8Array(await f.slice(0, 1024).arrayBuffer()));
-}
+const isPdf = (f) => f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf');
 
 // New files are appended to what's already loaded — nothing is ever replaced.
 async function addFiles(list) {
-  const kinds = await Promise.all(list.map(kindOf));
-  const supported = list.filter((_, i) => kinds[i]);
+  const pdfs = list.filter(isPdf);
   const fresh = [];
   let duplicates = 0;
-  for (const f of supported) {
+  for (const f of pdfs) {
     const key = store.fileKey(f.name, f.size);
     if (files.has(key) || fresh.some((r) => r.key === key)) duplicates++;
     else fresh.push({ key, name: f.name, size: f.size, blob: f, addedAt: Date.now() + fresh.length });
   }
-  if (list.length > supported.length) toast('Only PDFs and label images (PNG / JPG) are supported');
+  if (list.length > pdfs.length) toast('Only PDF files are supported');
   if (duplicates) toast(`${duplicates} file${duplicates > 1 ? 's are' : ' is'} already added`);
   if (!fresh.length) return;
   await Promise.all(fresh.map((r) => store.saveFile(r)));
@@ -246,11 +235,8 @@ async function processRecords(records, overrides) {
 }
 
 async function addFile(record, overrides, onPage) {
-  // Stored as received; label images become a PDF here, so restores work the same way.
-  const converted = await asPdfBytes(new Uint8Array(await record.blob.arrayBuffer()));
-  const { bytes } = converted;
+  const bytes = new Uint8Array(await record.blob.arrayBuffer());
   const doc = await openPdf(bytes);
-  const platformHint = converted.platformHint ?? platformFromMetadata(await pdfInfo(doc));
   const fileId = record.key;
   files.set(fileId, { name: record.name, bytes, doc, vector: await canEmbedVector(bytes) });
 
@@ -259,7 +245,7 @@ async function addFile(record, overrides, onPage) {
     onPage(i, doc.numPages);
     const page = await doc.getPage(i + 1);
     const info = await readPage(page, PREVIEW_SCALE);
-    const found = detectLabels({ ...info, platformHint });
+    const found = detectLabels(info);
     for (const [index, result] of found.entries()) {
       const key = store.labelKey(fileId, i, index);
       const saved = overrides.get(key) ?? {};
@@ -270,8 +256,7 @@ async function addFile(record, overrides, onPage) {
         pageIndex: i,
         index, // position on the page, for pages holding several labels
         perPage: found.length,
-        platform: saved.platform ?? result.platform,
-        detectedPlatform: result.platform, // 'unknown' ones can be set by hand
+        platform: result.platform,
         crop,
         cropEdited: !!saved.crop,
         skip: saved.skip ?? result.skip,
@@ -290,17 +275,8 @@ async function addFile(record, overrides, onPage) {
   return added;
 }
 
-async function pdfInfo(doc) {
-  try {
-    return (await doc.getMetadata()).info;
-  } catch {
-    return null;
-  }
-}
-
 function persistLabel(label) {
   const value = { skip: label.skip };
-  if (label.platform !== label.detectedPlatform) value.platform = label.platform;
   if (label.cropEdited) value.crop = label.crop;
   if (label.reprint) value.reprint = true;
   store.saveOverride(label.key, value);
@@ -425,14 +401,14 @@ function renderCard(label) {
   else if (isPrinted(label)) tags.push(['printed', printedText(label)]);
   if (label.skip) tags.push(['skip', label.reason ?? 'Skipped']);
   const order = label.orderId
-    ? `<span class="card-order">${label.uid?.startsWith('awb:') ? '' : '#'}${escapeHtml(label.orderId)}</span>`
+    ? `<span class="card-order">#${escapeHtml(label.orderId)}</span>`
     : label.reason
       ? ''
       : '<span class="card-order missing">No order ID found</span>';
   const switchTitle = label.duplicate ? 'Duplicate — the first copy is printed instead' : 'Include in print';
   card.innerHTML = `
     <div class="thumb">
-      ${platformBadge(label)}
+      <span class="badge">${label.platform}</span>
       <span class="tags">${tags.map(([cls, text]) => `<span class="tag ${cls}">${escapeHtml(text)}</span>`).join('')}</span>
       <button class="btn small edit-btn">✎ Crop</button>
     </div>
@@ -460,21 +436,7 @@ function renderCard(label) {
     }
   });
   card.querySelector('.edit-btn').addEventListener('click', () => onEdit(label));
-  card.querySelector('.platform-pick')?.addEventListener('change', (e) => {
-    label.platform = e.target.value;
-    persistLabel(label);
-    render();
-  });
   return card;
-}
-
-// Labels whose platform couldn't be read (e.g. a pasted label image) get a picker.
-function platformBadge(label) {
-  if (label.detectedPlatform !== 'unknown') return `<span class="badge">${label.platform}</span>`;
-  const options = PLATFORMS.map(
-    (p) => `<option value="${p}"${p === label.platform ? ' selected' : ''}>${p === 'unknown' ? 'Platform?' : capitalize(p)}</option>`,
-  ).join('');
-  return `<select class="badge platform-pick" aria-label="Platform">${options}</select>`;
 }
 
 function setSkipForVisible(skip) {
@@ -748,32 +710,22 @@ function showInstallHelp() {
 // problem: optional line explaining why the help opened (e.g. nothing to paste).
 function showPasteHelp(problem) {
   const intro = problem ? `<p class="install-note warn">${escapeHtml(problem)}</p>` : '';
-  // Two shortcuts: one in the share sheet collects labels into a file (so many labels can
-  // be sent without opening this app), one copies them all at once for "Paste PDF".
   const body = isIOS
     ? `${intro}
-      <h3>Shortcut 1 — “Label Cropper” (share menu)</h3>
+      <h3>One-time setup (2 minutes)</h3>
       ${stepList([
-        'Shortcuts app → <b>+</b> → name it <b>Label Cropper</b>.',
-        'Add <b>Base64 Encode</b> → tap <b>Input</b> → <b>Shortcut Input</b> → in the new top block tap <b>Nowhere</b> → <b>Share Sheet</b>. Set <b>Line Breaks: None</b>.',
-        'Add <b>Combine Text</b> → <b>New Lines</b>.',
-        'Add <b>Append to Text File</b> → file path <b>labels.txt</b>, <b>Make New Line</b> on.',
-      ])}
-      <h3>Shortcut 2 — “Labels Paste”</h3>
-      ${stepList([
-        'Shortcuts app → <b>+</b> → name it <b>Labels Paste</b>.',
-        'Add <b>Get File from Folder</b> → path <b>labels.txt</b>.',
-        'Add <b>Copy to Clipboard</b>.',
-        'Add <b>Delete Files</b> → turn off <b>Confirm Before Deleting</b>.',
-        'Name at the top → <b>Add to Home Screen</b>.',
+        'Open the <b>Shortcuts</b> app → tap <b>+</b> → name it <b>Label Cropper</b>.',
+        'Tap <b>ⓘ</b> (or the name at the top → <b>Details</b>) → turn on <b>Show in Share Sheet</b>. In the first action tap <b>Any</b> / <b>Images and more</b> and keep only <b>PDFs</b>.',
+        'Add the action <b>Base64 Encode</b> → tap ▸ → <b>Line Breaks: None</b>.',
+        'Add <b>Combine Text</b> → <b>New Lines</b> (lets you send several PDFs at once).',
+        'Add <b>Copy to Clipboard</b>. Optional: add <b>Show Notification</b> “Open Label Cropper and tap Paste”.',
       ])}
       <h3>Every day</h3>
       ${stepList([
-        'Each label: Amazon / WhatsApp → <b>Share</b> → <b>Label Cropper</b>. Stay in that app and do the next one.',
-        'When all are sent: tap <b>Labels Paste</b> on the home screen.',
-        'Open this app → <b>Paste PDF</b> → <b>Paste</b>. All labels come in at once.',
+        'WhatsApp: open the PDF → <b>Share</b> → <b>Label Cropper</b>.',
+        'Open this app → <b>Paste PDF</b> → tap <b>Paste</b>.',
       ])}
-      <p class="install-note">No shortcut? WhatsApp → <b>Share</b> → <b>Save to Files</b>, then tap <b>Select label PDFs</b> here → <b>Recents</b>. Amazon Seller app labels are images: <b>Share</b> → <b>Copy</b> → <b>Paste PDF</b> works too.</p>`
+      <p class="install-note">No shortcut? WhatsApp → <b>Share</b> → <b>Save to Files</b>, then tap <b>Select label PDFs</b> here → <b>Recents</b>.</p>`
     : `${intro}
       ${stepList([
         'Copy a PDF file (Files / Explorer / Finder), then press <b>Ctrl+V</b> (<b>⌘+V</b>) anywhere on this page.',
@@ -781,7 +733,7 @@ function showPasteHelp(problem) {
           ? 'From WhatsApp: install this app, then PDF → <b>Share</b> → <b>Label Cropper</b>.'
           : 'Or drop PDF files on the <b>Select label PDFs</b> box.',
       ])}`;
-  showModal(isIOS ? 'Send labels from Amazon / WhatsApp (iPhone)' : 'Paste a PDF', body);
+  showModal(isIOS ? 'Send PDFs from WhatsApp (iPhone)' : 'Paste a PDF', body);
 }
 
 function stepList(steps) {
